@@ -58,6 +58,29 @@ describe('device', function device() {
         });
     });
 
+    describe('deleteInstalledChannel', () => {
+        it('works', async () => {
+            try {
+                // Deletes the current installed channel
+                await rokuDeploy.deleteInstalledChannel(options);
+                // Run again to make sure it doesn't fail when the channel is already deleted
+                await rokuDeploy.deleteInstalledChannel(options);
+            } catch (e) {
+                assert.fail(e.message);
+            }
+        });
+    });
+
+    describe('rekeyDevice', () => {
+        it('works', async () => {
+            try {
+                await rokuDeploy.rekeyDevice(options);
+            } catch (e) {
+                assert.fail(e.message);
+            }
+        });
+    });
+
     describe('deployAndSignPackage', () => {
         it('works', async () => {
             expect(file(await rokuDeploy.deployAndSignPackage(options))).to.exist;

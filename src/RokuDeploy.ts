@@ -19,6 +19,8 @@ export class RokuDeploy {
     public request = request;
     public fsExtra = _fsExtra;
 
+    pressHomeKeyWaitIntervalInMillis = 3000;
+
     /**
      * Copies all of the referenced files to the staging folder
      * @param options
@@ -425,10 +427,15 @@ export class RokuDeploy {
         port = port ? port : options.remotePort;
         timeout = timeout ? timeout : options.timeout;
         // press the home button to return to the main screen
-        return this.doPostRequest({
+        let result = await this.doPostRequest({
             url: `http://${host}:${port}/keypress/Home`,
             timeout: timeout
         }, false);
+
+        // Wait for device to possibly leave current application or screensaver
+        util.sleep(this.pressHomeKeyWaitIntervalInMillis);
+
+        return result;
     }
 
     /**
@@ -521,12 +528,18 @@ export class RokuDeploy {
         if (!path.isAbsolute(options.rekeySignedPackage)) {
             rekeySignedPackagePath = path.join(options.rootDir, options.rekeySignedPackage);
         }
+        
+        let readStream = this.fsExtra.createReadStream(rekeySignedPackagePath);
+        //wait for the stream to open (no harm in doing this, and it helps solve an issue in the tests)
+        await new Promise((resolve) => {
+            readStream.on('open', resolve);
+        });
 
         let requestOptions = this.generateBaseRequestOptions('plugin_inspect', options);
         requestOptions.formData = {
             mysubmit: 'Rekey',
             passwd: options.signingPassword,
-            archive: this.fsExtra.createReadStream(rekeySignedPackagePath)
+            archive: readStream 
         };
 
         let results = await this.doPostRequest(requestOptions);
@@ -557,9 +570,13 @@ export class RokuDeploy {
         if (!options.signingPassword) {
             throw new errors.MissingRequiredOptionError('Must supply signingPassword');
         }
+
         let manifestPath = path.join(options.stagingFolderPath, 'manifest');
         let parsedManifest = await this.parseManifest(manifestPath);
         let appName = parsedManifest.title + '/' + parsedManifest.major_version + '.' + parsedManifest.minor_version;
+
+        // Delete the current signed package
+        await this.deleteSignedPackage(options);
 
         let requestOptions = this.generateBaseRequestOptions('plugin_package', options);
 
@@ -679,13 +696,43 @@ export class RokuDeploy {
      */
     public async deleteInstalledChannel(options?: RokuDeployOptions) {
         options = this.getOptions(options);
+        
+        await this.pressHomeButton(options.host);
 
         let deleteOptions = this.generateBaseRequestOptions('plugin_install', options);
         deleteOptions.formData = {
             mysubmit: 'Delete',
             archive: ''
         };
-        return (await this.doPostRequest(deleteOptions));
+
+        let results = await this.doPostRequest(deleteOptions);
+        if (results.body.indexOf('Delete Failed: No such file') === -1 && results.body.indexOf('Uninstall Success') === -1) {
+            console.log(results.body);
+            throw new errors.FailedDeviceResponseError('Failed to delete current installed channel');
+        }
+    }
+
+
+    /**
+     * Deletes any signed package on the target Roku device
+     * @param options
+     */
+    public async deleteSignedPackage(options?: RokuDeployOptions) {
+        options = this.getOptions(options);
+        
+        let deleteOptions = this.generateBaseRequestOptions('plugin_package', options);
+        deleteOptions.formData = {
+            mysubmit: 'Delete',
+            pkg_time: '0',
+            app_name:'',
+            passwd: ''
+        };
+
+        let results = await this.doPostRequest(deleteOptions);
+        if (results.body.indexOf('Delete Succeeded') === -1) {
+            console.log(results.body);
+            throw new errors.FailedDeviceResponseError('Failed to delete current installed channel');
+        }
     }
 
     /**
