@@ -697,6 +697,9 @@ export class RokuDeploy {
     public async deleteInstalledChannel(options?: RokuDeployOptions) {
         options = this.getOptions(options);
         
+        // Leave channel if it is running. Deleting when a channel is still running might
+        // cause a crash
+        // Issue: https://github.com/rokucommunity/roku-deploy/issues/41
         await this.pressHomeButton(options.host);
 
         let deleteOptions = this.generateBaseRequestOptions('plugin_install', options);
