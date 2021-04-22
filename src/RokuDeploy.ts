@@ -19,7 +19,7 @@ export class RokuDeploy {
     public request = request;
     public fsExtra = _fsExtra;
 
-    pressHomeKeyWaitIntervalInMillis = 3000;
+    pressHomeButtonWaitIntervalInMillis = 5000;
 
     /**
      * Copies all of the referenced files to the staging folder
@@ -433,7 +433,7 @@ export class RokuDeploy {
         }, false);
 
         // Wait for device to possibly leave current application or screensaver
-        util.sleep(this.pressHomeKeyWaitIntervalInMillis);
+        await util.sleep(this.pressHomeButtonWaitIntervalInMillis);
 
         return result;
     }
@@ -487,6 +487,7 @@ export class RokuDeploy {
                 await this.fsExtra.remove(zipFilePath);
             }
         }
+
     }
 
     /**
@@ -710,7 +711,6 @@ export class RokuDeploy {
 
         let results = await this.doPostRequest(deleteOptions);
         if (results.body.indexOf('Delete Failed: No such file') === -1 && results.body.indexOf('Uninstall Success') === -1) {
-            console.log(results.body);
             throw new errors.FailedDeviceResponseError('Failed to delete current installed channel');
         }
     }
@@ -733,7 +733,6 @@ export class RokuDeploy {
 
         let results = await this.doPostRequest(deleteOptions);
         if (results.body.indexOf('Delete Succeeded') === -1) {
-            console.log(results.body);
             throw new errors.FailedDeviceResponseError('Failed to delete current installed channel');
         }
     }
