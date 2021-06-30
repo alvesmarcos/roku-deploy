@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as _fsExtra from 'fs-extra';
 import * as request from 'request';
-import * as archiver from 'archiver';
+import * as JSZip from 'jszip';
 import * as dateformat from 'dateformat';
 import * as errors from './Errors';
 import * as minimatch from 'minimatch';
@@ -13,8 +13,15 @@ const globAsync = promisify(glob);
 
 import { util } from './util';
 import { RokuDeployOptions, FileEntry } from './RokuDeployOptions';
+import { Logger, LogLevel } from './Logger';
 
 export class RokuDeploy {
+
+    constructor() {
+        this.logger = new Logger();
+    }
+
+    private logger: Logger;
     //store the import on the class to make testing easier
     public request = request;
     public fsExtra = _fsExtra;
@@ -652,13 +659,52 @@ export class RokuDeploy {
             throw new errors.UnparsableDeviceResponseError('Invalid response', results);
         }
 
+        this.logger.debug(results.body);
+
         if (results.response.statusCode === 401) {
             throw new errors.UnauthorizedDeviceResponseError('Unauthorized. Please verify username and password for target Roku.', results);
         }
 
-        if (results.response.statusCode !== 200) {
-            throw new errors.InvalidDeviceResponseCodeError('Invalid response code: ' + results.response.statusCode);
+        let rokuMessages = this.getRokuMessagesFromResponseBody(results.body);
+
+        if (rokuMessages.errors.length > 0) {
+            throw new errors.FailedDeviceResponseError(rokuMessages.errors[0], rokuMessages);
         }
+
+        if (results.response.statusCode !== 200) {
+            throw new errors.InvalidDeviceResponseCodeError('Invalid response code: ' + results.response.statusCode, results);
+        }
+    }
+
+    private getRokuMessagesFromResponseBody(body: string): { errors: Array<string>; infos: Array<string>; successes: Array<string> } {
+        let errors = [];
+        let infos = [];
+        let successes = [];
+        let errorRegex = /Shell\.create\('Roku\.Message'\)\.trigger\('[\w\s]+',\s+'(\w+)'\)\.trigger\('[\w\s]+',\s+'(.*?)'\)/igm;
+        let match;
+
+        // eslint-disable-next-line no-cond-assign
+        while (match = errorRegex.exec(body)) {
+            let [, messageType, message] = match;
+            switch (messageType.toLowerCase()) {
+                case 'error':
+                    errors.push(message);
+                    break;
+
+                case 'info':
+                    infos.push(message);
+                    break;
+
+                case 'success':
+                    successes.push(message);
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        return { errors: errors, infos: infos, successes: successes };
     }
 
     /**
@@ -753,11 +799,13 @@ export class RokuDeploy {
             timeout: 150000,
             rootDir: './',
             files: [...DefaultFiles],
-            username: 'rokudev'
+            username: 'rokudev',
+            logLevel: LogLevel.log
         };
 
         //override the defaults with any found or provided options
         let finalOptions = { ...defaultOptions, ...fileOptions, ...options };
+        this.logger.logLevel = finalOptions.logLevel;
 
         //fully resolve the folder paths
         finalOptions.rootDir = path.resolve(process.cwd(), finalOptions.rootDir);
@@ -890,41 +938,34 @@ export class RokuDeploy {
      * @param srcFolder
      * @param zipFilePath
      */
-    public zipFolder(srcFolder: string, zipFilePath: string) {
-        return new Promise((resolve, reject) => {
-            let output = this.fsExtra.createWriteStream(zipFilePath);
-            let archive = archiver('zip');
+    public async zipFolder(srcFolder: string, zipFilePath: string, preFileZipCallback?: (file: StandardizedFileEntry, data: Buffer) => Buffer) {
+        const files = await this.getFilePaths(['**/*'], srcFolder);
 
-            output.on('close', () => {
-                resolve();
-            });
-
-            output.on('error', (err) => {
-                reject(err);
-            });
-
-            /* istanbul ignore next */
-            archive.on('warning', (err) => {
-                if (err.code === 'ENOENT') {
-                    console.warn(err);
-                } else {
-                    reject(err);
+        const zip = new JSZip();
+        // Allows us to wait until all are done before we build the zip
+        const promises = [];
+        for (const file of files) {
+            const promise = this.fsExtra.readFile(file.src).then((data) => {
+                if (preFileZipCallback) {
+                    data = preFileZipCallback(file, data);
                 }
+
+                const ext = path.extname(file.dest).toLowerCase();
+                let compression = 'DEFLATE';
+
+                if (ext === '.jpg' || ext === '.png' || ext === '.jpeg') {
+                    compression = 'STORE';
+                }
+                zip.file(file.dest.replace(/[\\/]/g, '/'), data, {
+                    compression: compression
+                });
             });
-
-            /* istanbul ignore next */
-            archive.on('error', (err) => {
-                reject(err);
-            });
-
-            archive.pipe(output);
-
-            //add every file in the source folder
-            archive.directory(srcFolder, false);
-
-            //finalize the archive
-            archive.finalize();
-        });
+            promises.push(promise);
+        }
+        await Promise.all(promises);
+        // level 2 compression seems to be the best balance between speed and file size. Speed matters more since most will be calling squashfs afterwards.
+        const content = await zip.generateAsync({ type: 'nodebuffer', compressionOptions: { level: 2 } });
+        return this.fsExtra.writeFile(zipFilePath, content);
     }
 }
 
