@@ -755,9 +755,12 @@ export class RokuDeploy {
             archive: ''
         };
 
-        let results = await this.doPostRequest(deleteOptions);
-        if (results.body.indexOf('Delete Failed: No such file') === -1 && results.body.indexOf('Uninstall Success') === -1) {
-            throw new errors.FailedDeviceResponseError('Failed to delete current installed channel');
+        try {
+             await this.doPostRequest(deleteOptions);
+        } catch (exception) {
+            if (exception.message.indexOf('Delete Failed: No such file') === -1 && exception.message.indexOf('Uninstall Success') === -1) {
+                throw exception;
+            }
         }
     }
 
