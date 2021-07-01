@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import * as moment from 'moment';
+import  moment from 'moment';
 import { EventEmitter } from 'eventemitter3';
 import { Stopwatch } from './Stopwatch';
 
